@@ -10,7 +10,7 @@ class AuditableBehavior extends ModelBehavior {
    *
    * @var   Object
    */
-  private $_original = array();
+  private $_original = null;
 
   /**
    * Initiate behavior for the model using specified settings.
@@ -28,6 +28,9 @@ class AuditableBehavior extends ModelBehavior {
    * @param   array   $settings   Settings overrides.
    */
   public function setup( Model $Model, $settings = array() ) {
+  
+    //$this->log('setup ' . $Model->name, 'debug');
+  
     if( !isset( $this->settings[$Model->alias] ) ) {
       $this->settings[$Model->alias] = array(
         'ignore' => array( 'created', 'updated', 'modified' ),
@@ -55,6 +58,11 @@ class AuditableBehavior extends ModelBehavior {
         unset( $this->settings[$Model->alias]['habtm'][$index] );
       }
     }
+    
+    if (!isset($this->_original))
+    {
+        $this->_original = array();
+    }
   }
 
   /**
@@ -66,7 +74,12 @@ class AuditableBehavior extends ModelBehavior {
     # If we're editing an existing object, save off a copy of
     # the object as it exists before any changes.
     if( !empty( $Model->id ) ) {
+    
+      //$this->log('beforeSave ' . $Model->name, 'debug');
+    
       $this->_original[$Model->alias] = $this->_getModelData( $Model );
+      
+      //$this->log($this->_original, 'debug');
     }
     
     return true;
@@ -79,14 +92,13 @@ class AuditableBehavior extends ModelBehavior {
    * @return	boolean
    */
   public function beforeDelete( Model $Model, $cascade = true ) {
-    $original = $Model->find(
+    $this->_original[$Model->alias] = $Model->find(
       'first',
       array(
         'contain'    => false,
         'conditions' => array( $Model->alias . '.' . $Model->primaryKey => $Model->id ),
       )
     );
-    $this->_original[$Model->alias] = $original[$Model->alias];
     
     return true;
   }
@@ -100,7 +112,11 @@ class AuditableBehavior extends ModelBehavior {
    * @return  void
    */
   public function afterSave( Model $Model, $created ) {
-    $audit = array( $Model->alias => $this->_getModelData( $Model ) );
+  
+    //$this->log('afterSave ' . $Model->name, 'debug');
+    //$this->log($this->_original, 'debug');
+  
+    $audit = $this->_getModelData( $Model );
     $audit[$Model->alias][$Model->primaryKey] = $Model->id;
 
     /*
@@ -153,7 +169,11 @@ class AuditableBehavior extends ModelBehavior {
       }
 
       if( !$created ) {
-        if( array_key_exists( $property, $this->_original[$Model->alias] ) && $this->_original[$Model->alias][$property] != $value ) {
+        if (!is_array($this->_original[$Model->alias]))
+        {
+            //$this->log('original missing ' . $Model->name, 'debug');
+        }
+        else if( array_key_exists( $property, $this->_original[$Model->alias][$Model->alias] ) && $this->_original[$Model->alias][$Model->alias][$property] != $value ) {
           /*
            * If the property exists in the original _and_ the
            * value is different, store it.
@@ -161,7 +181,7 @@ class AuditableBehavior extends ModelBehavior {
           $delta = array(
             'AuditDelta' => array(
               'property_name' => $property,
-              'old_value'     => $this->_original[$Model->alias][$property],
+              'old_value'     => $this->_original[$Model->alias][$Model->alias][$property],
               'new_value'     => $value
             )
           );
@@ -183,7 +203,7 @@ class AuditableBehavior extends ModelBehavior {
       }
       else {
         if( $Model->hasMethod( 'afterAuditUpdate' ) ) {
-          $Model->afterAuditUpdate( $Model, $this->_original, $updates, $Model->Audit->id );
+          $Model->afterAuditUpdate( $Model, $this->_original[$Model->alias], $updates, $Model->Audit->id );
         }
       }
     }
@@ -200,7 +220,7 @@ class AuditableBehavior extends ModelBehavior {
           $Model->afterAuditProperty(
             $Model,
             $delta['AuditDelta']['property_name'],
-            $this->_original[$Model->alias][$delta['AuditDelta']['property_name']],
+            $this->_original[$Model->alias][$Model->alias][$delta['AuditDelta']['property_name']],
             $delta['AuditDelta']['new_value']
           );
         }
@@ -218,8 +238,9 @@ class AuditableBehavior extends ModelBehavior {
      * Unset the original object value so it's ready for the next
      * call.
      */
-    if( isset( $this->_original ) ) {
-      $this->_original = array();
+    if( isset( $this->_original[$Model->alias] ) ) {
+        //$this->log('clearing _original for ' . $Model->name, 'debug');
+        unset($this->_original[$Model->alias]);
     }
     return true;    
   }
@@ -243,7 +264,7 @@ class AuditableBehavior extends ModelBehavior {
       $source = $Model->current_user();
     }
     
-    $audit = array( $Model->alias => $this->_original[$Model->alias] );
+    $audit = $this->_original[$Model->alias];
     $data  = array(
       'Audit' => array(
         'event'       => 'DELETE',
@@ -307,6 +328,6 @@ class AuditableBehavior extends ModelBehavior {
       }
     }
 
-    return $audit_data[$Model->alias];
+    return $audit_data;
   }
 }
